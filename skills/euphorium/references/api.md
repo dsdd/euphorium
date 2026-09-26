@@ -59,15 +59,22 @@ Create every sound through the same API:
 ```rust
 let embedded = soundscape.create_sound("click", SoundSource::static_bytes(CLICK_BYTES))?;
 let runtime = soundscape.create_sound("voice", SoundSource::shared_bytes(downloaded_bytes))?;
-let portable = soundscape.create_sound("music", SoundSource::asset(audio_asset))?;
+let portable = soundscape.create_sound(
+    "music",
+    euphorium::audio_source! {
+        native: file("assets/music.mp3"),
+        wasm: url("/assets/music.mp3"),
+    },
+)?;
 ```
 
-Native targets also support `SoundSource::file(path)`. `SoundSource::asset(SoundAsset)` uses its
-native path on native targets and browser URL on WASM.
+Use `native: bytes(include_bytes!(...))` instead of `native: file(path)` to embed native audio.
+Likewise, WASM supports `bytes(include_bytes!(...))` as well as `url(...)`; choose bytes explicitly
+when you want the audio embedded in the `.wasm`.
 
 Creation validates and loads static bytes, shared bytes, and native paths without playing. Use
-`sound.set_source(source)` to replace a source transactionally. Use `sound.load().await` to preload
-an `SoundAsset`; otherwise `sound.play()` loads it lazily.
+`sound.set_source(source)` to replace a source transactionally. Use `sound.load().await` to preload a
+browser URL; otherwise `sound.play()` loads it lazily.
 
 ## Transport
 

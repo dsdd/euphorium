@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use euphorium::{PlaybackState, SoundAsset, SoundSource, Soundscape, cpal};
+use euphorium::{PlaybackState, SoundSource, Soundscape, Waveform, cpal};
 use wasm_bindgen::{JsCast, JsValue, closure::Closure};
 use wasm_bindgen_futures::JsFuture;
 use wasm_bindgen_test::{wasm_bindgen_test, wasm_bindgen_test_configure};
@@ -42,12 +42,16 @@ fn selecting_a_backend_before_a_user_gesture_keeps_output_deferred() {
 }
 
 #[wasm_bindgen_test]
-async fn duration_from_asset_fetches_and_decodes_browser_url() {
-    let asset = SoundAsset::new("missing/native/audio.wav", WAV_DATA_URL);
-
+async fn duration_from_platform_source_fetches_and_decodes_browser_url() {
     let soundscape = Soundscape::new();
     let sound = soundscape
-        .create_sound("browser", SoundSource::asset(asset))
+        .create_sound(
+            "browser",
+            euphorium::audio_source! {
+                native: bytes(include_bytes!("../examples/music/THE UNFORGIVING.mp3")),
+                wasm: url(WAV_DATA_URL),
+            },
+        )
         .expect("the browser sound should be created");
     sound
         .load()
@@ -68,11 +72,32 @@ async fn duration_from_asset_fetches_and_decodes_browser_url() {
 }
 
 #[wasm_bindgen_test]
-async fn soundscape_owns_pending_asset_playback_and_duration() {
-    let asset = SoundAsset::new("missing/native/audio.wav", WAV_DATA_URL);
+async fn waveform_from_url_fetches_and_decodes_browser_audio() {
+    let waveform = Waveform::from_url(WAV_DATA_URL)
+        .await
+        .expect("browser audio URL should be decoded into a waveform");
+
+    assert!(waveform.duration() > Duration::ZERO);
+}
+
+#[wasm_bindgen_test]
+fn platform_source_can_embed_bytes_in_wasm_explicitly() {
+    let source = euphorium::audio_source! {
+        native: file("unused-native-path"),
+        wasm: bytes(include_bytes!("browser.rs")),
+    };
+
+    assert_eq!(
+        source.len(),
+        Some(include_bytes!("browser.rs").len() as u64)
+    );
+}
+
+#[wasm_bindgen_test]
+async fn soundscape_owns_pending_url_playback_and_duration() {
     let soundscape = Soundscape::new();
     let sound = soundscape
-        .create_sound("pending", SoundSource::asset(asset))
+        .create_sound("pending", SoundSource::url(WAV_DATA_URL))
         .expect("the pending browser sound should be created");
 
     sound
@@ -103,12 +128,12 @@ async fn soundscape_owns_pending_asset_playback_and_duration() {
 }
 
 #[wasm_bindgen_test]
-async fn replacing_playing_sound_with_uncached_asset_starts_loading() {
-    let first = SoundAsset::new("missing/native/first.wav", WAV_DATA_URL);
-    let second = SoundAsset::new("missing/native/second.wav", WAV_DATA_URL);
+async fn replacing_playing_sound_with_uncached_url_starts_loading() {
+    let first = SoundSource::url(WAV_DATA_URL);
+    let second = SoundSource::url(WAV_DATA_URL);
     let soundscape = Soundscape::new();
     let sound = soundscape
-        .create_sound("replacement", SoundSource::asset(first))
+        .create_sound("replacement", first)
         .expect("the initial browser sound should be created");
 
     sound
@@ -124,7 +149,7 @@ async fn replacing_playing_sound_with_uncached_asset_starts_loading() {
     assert_eq!(sound.playback_state().unwrap(), PlaybackState::Playing);
 
     sound
-        .set_source(SoundSource::asset(second))
+        .set_source(second)
         .expect("the replacement browser asset should be accepted");
     assert!(sound.is_loading().unwrap());
 
@@ -148,18 +173,14 @@ async fn replacing_playing_sound_with_uncached_asset_starts_loading() {
 }
 
 #[wasm_bindgen_test]
-async fn group_loads_browser_assets_with_shared_configuration() {
-    let first = SoundAsset::new("missing/native/first.wav", WAV_DATA_URL);
-    let second = SoundAsset::new("missing/native/second.wav", WAV_DATA_URL);
+async fn group_loads_browser_urls_with_shared_configuration() {
+    let first = SoundSource::url(WAV_DATA_URL);
+    let second = SoundSource::url(WAV_DATA_URL);
     let soundscape = Soundscape::new();
     let group = soundscape.create_group("browser").unwrap();
     group.set_volume(0.4).unwrap();
-    let first = group
-        .create_sound("first", SoundSource::asset(first))
-        .unwrap();
-    let second = group
-        .create_sound("second", SoundSource::asset(second))
-        .unwrap();
+    let first = group.create_sound("first", first).unwrap();
+    let second = group.create_sound("second", second).unwrap();
 
     first.load().await.expect("the first asset should load");
     second.load().await.expect("the second asset should load");

@@ -1,8 +1,9 @@
+#[cfg(not(target_arch = "wasm32"))]
+use std::path::PathBuf;
 #[cfg(target_arch = "wasm32")]
 use std::sync::Mutex;
 use std::{
     fmt::{Debug, Formatter},
-    path::{Path, PathBuf},
     sync::Arc,
 };
 
@@ -18,45 +19,22 @@ use web_sys::Response;
 #[cfg(target_arch = "wasm32")]
 use crate::SoundscapeError;
 
-/// An audio file with locations for native and browser targets.
-///
-/// Native targets open [`native_path`](Self::native_path) as a file and stream it through the
-/// decoder. WASM targets fetch [`wasm_url`](Self::wasm_url) from the browser and decode the
-/// response in memory, because browser requests are not exposed as seekable Rust readers.
-#[derive(Clone)]
-pub struct SoundAsset {
-    native_path: PathBuf,
-    wasm_url: String,
-    #[cfg(target_arch = "wasm32")]
-    browser_bytes: Arc<Mutex<Option<Arc<[u8]>>>>,
-}
-
-impl Debug for SoundAsset {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("SoundAsset")
-            .field("native_path", &self.native_path)
-            .field("wasm_url", &self.wasm_url)
-            .finish()
-    }
-}
-
 #[cfg(target_arch = "wasm32")]
-fn browser_asset_error(error: impl std::fmt::Debug) -> SoundscapeError {
+fn browser_url_error(error: impl std::fmt::Debug) -> SoundscapeError {
     SoundscapeError::BrowserAsset(format!("{error:?}"))
 }
 
 /// Fetches a web resource from the browser and returns its bytes.
 #[cfg(target_arch = "wasm32")]
-pub async fn fetch_browser_asset(url: &str) -> Result<Arc<[u8]>, SoundscapeError> {
+pub async fn fetch_browser_url(url: &str) -> Result<Arc<[u8]>, SoundscapeError> {
     let window = web_sys::window().ok_or_else(|| {
         SoundscapeError::BrowserAsset("browser window is unavailable".to_string())
     })?;
     let response = JsFuture::from(window.fetch_with_str(url))
         .await
-        .map_err(browser_asset_error)?
+        .map_err(browser_url_error)?
         .dyn_into::<Response>()
-        .map_err(browser_asset_error)?;
+        .map_err(browser_url_error)?;
 
     if !response.ok() {
         return Err(SoundscapeError::BrowserAsset(format!(
@@ -66,9 +44,9 @@ pub async fn fetch_browser_asset(url: &str) -> Result<Arc<[u8]>, SoundscapeError
         )));
     }
 
-    let buffer = JsFuture::from(response.array_buffer().map_err(browser_asset_error)?)
+    let buffer = JsFuture::from(response.array_buffer().map_err(browser_url_error)?)
         .await
-        .map_err(browser_asset_error)?;
+        .map_err(browser_url_error)?;
     let array = Uint8Array::new(&buffer);
     let mut bytes = Arc::<[u8]>::new_uninit_slice(array.length() as usize);
     array.copy_to_uninit(Arc::get_mut(&mut bytes).unwrap());
@@ -76,61 +54,8 @@ pub async fn fetch_browser_asset(url: &str) -> Result<Arc<[u8]>, SoundscapeError
     Ok(unsafe { bytes.assume_init() })
 }
 
-impl SoundAsset {
-    /// Creates an asset using a native filesystem path and a browser URL.
-    pub fn new(native_path: impl Into<PathBuf>, wasm_url: impl Into<String>) -> Self {
-        Self {
-            native_path: native_path.into(),
-            wasm_url: wasm_url.into(),
-            #[cfg(target_arch = "wasm32")]
-            browser_bytes: Arc::new(Mutex::new(None)),
-        }
-    }
-
-    /// Returns the native filesystem path.
-    pub fn native_path(&self) -> &Path {
-        &self.native_path
-    }
-
-    /// Returns the browser URL.
-    pub fn wasm_url(&self) -> &str {
-        &self.wasm_url
-    }
-
-    /// Clears bytes cached after loading this asset in a browser.
-    ///
-    /// Clones of this asset share the same cache. Sounds and waveform builders can retain their
-    /// own references independently, and WebAudio may release a stopped decoder asynchronously.
-    pub fn clear_browser_cache(&self) {
-        #[cfg(target_arch = "wasm32")]
-        self.browser_bytes.lock().unwrap().take();
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    pub(crate) fn cached_browser_bytes(&self) -> Option<Arc<[u8]>> {
-        self.browser_bytes.lock().unwrap().clone()
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    pub(crate) async fn load_browser_bytes(&self) -> Result<Arc<[u8]>, SoundscapeError> {
-        if let Some(bytes) = self.cached_browser_bytes() {
-            return Ok(bytes);
-        }
-
-        let bytes = fetch_browser_asset(self.wasm_url()).await?;
-        let mut browser_bytes = self.browser_bytes.lock().unwrap();
-
-        if let Some(cached_bytes) = browser_bytes.as_ref() {
-            return Ok(cached_bytes.clone());
-        }
-
-        *browser_bytes = Some(bytes.clone());
-        Ok(bytes)
-    }
-}
-
 /// An audio source assignment retained by a [`crate::Sound`].
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub enum SoundSource {
     /// No audio resource has been assigned yet.
     #[default]
@@ -142,8 +67,30 @@ pub enum SoundSource {
     /// A native filesystem path.
     #[cfg(not(target_arch = "wasm32"))]
     File(PathBuf),
-    /// A native-path/browser-URL pair.
-    Asset(SoundAsset),
+    /// A browser URL fetched and cached when loaded.
+    #[cfg(target_arch = "wasm32")]
+    #[doc(hidden)]
+    Url(String, Arc<Mutex<Option<Arc<[u8]>>>>),
+}
+
+impl Debug for SoundSource {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Empty => formatter.write_str("Empty"),
+            Self::StaticBytes(bytes) => formatter
+                .debug_tuple("StaticBytes")
+                .field(&bytes.len())
+                .finish(),
+            Self::SharedBytes(bytes) => formatter
+                .debug_tuple("SharedBytes")
+                .field(&bytes.len())
+                .finish(),
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::File(path) => formatter.debug_tuple("File").field(path).finish(),
+            #[cfg(target_arch = "wasm32")]
+            Self::Url(url, _) => formatter.debug_tuple("Url").field(url).finish(),
+        }
+    }
 }
 
 impl PartialEq for SoundSource {
@@ -160,9 +107,8 @@ impl SoundSource {
             (Self::SharedBytes(left), Self::SharedBytes(right)) => Arc::ptr_eq(left, right),
             #[cfg(not(target_arch = "wasm32"))]
             (Self::File(left), Self::File(right)) => left == right,
-            (Self::Asset(left), Self::Asset(right)) => {
-                left.native_path == right.native_path && left.wasm_url == right.wasm_url
-            }
+            #[cfg(target_arch = "wasm32")]
+            (Self::Url(left, _), Self::Url(right, _)) => left == right,
             _ => false,
         }
     }
@@ -193,9 +139,47 @@ impl SoundSource {
         Self::File(path.into())
     }
 
-    /// Creates a source from a cross-platform audio asset.
-    pub fn asset(asset: SoundAsset) -> Self {
-        Self::Asset(asset)
+    /// Creates a source fetched from a browser URL.
+    #[cfg(target_arch = "wasm32")]
+    pub fn url(url: impl Into<String>) -> Self {
+        Self::Url(url.into(), Arc::new(Mutex::new(None)))
+    }
+
+    /// Clears bytes cached after loading this URL in a browser.
+    ///
+    /// Clones of this source share the same cache. Active sounds may retain their own decoder
+    /// references until playback is stopped and released.
+    pub fn clear_browser_cache(&self) {
+        #[cfg(target_arch = "wasm32")]
+        if let Self::Url(_, bytes) = self {
+            bytes.lock().unwrap().take();
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn cached_browser_bytes(&self) -> Option<Arc<[u8]>> {
+        match self {
+            Self::Url(_, bytes) => bytes.lock().unwrap().clone(),
+            _ => None,
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) async fn load_browser_bytes(&self) -> Result<Arc<[u8]>, SoundscapeError> {
+        let Self::Url(url, cached_bytes) = self else {
+            return Err(SoundscapeError::NoAudioSource);
+        };
+        if let Some(bytes) = cached_bytes.lock().unwrap().clone() {
+            return Ok(bytes);
+        }
+
+        let bytes = fetch_browser_url(url).await?;
+        let mut cached_bytes = cached_bytes.lock().unwrap();
+        if let Some(existing) = cached_bytes.as_ref() {
+            return Ok(existing.clone());
+        }
+        *cached_bytes = Some(bytes.clone());
+        Ok(bytes)
     }
 
     /// Returns the byte length of this source.
@@ -206,19 +190,12 @@ impl SoundSource {
             Self::SharedBytes(bytes) => Some(bytes.len() as u64),
             #[cfg(not(target_arch = "wasm32"))]
             Self::File(path) => std::fs::metadata(path).ok().map(|metadata| metadata.len()),
-            Self::Asset(asset) => {
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    std::fs::metadata(asset.native_path())
-                        .ok()
-                        .map(|metadata| metadata.len())
-                }
-
-                #[cfg(target_arch = "wasm32")]
-                {
-                    asset.cached_browser_bytes().map(|bytes| bytes.len() as u64)
-                }
-            }
+            #[cfg(target_arch = "wasm32")]
+            Self::Url(_, bytes) => bytes
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|bytes| bytes.len() as u64),
         }
     }
 
@@ -249,15 +226,63 @@ impl From<Vec<u8>> for SoundSource {
     }
 }
 
-impl From<SoundAsset> for SoundSource {
-    fn from(asset: SoundAsset) -> Self {
-        Self::asset(asset)
-    }
-}
-
 #[cfg(not(target_arch = "wasm32"))]
 impl From<PathBuf> for SoundSource {
     fn from(path: PathBuf) -> Self {
         Self::File(path)
     }
+}
+
+/// Selects a native and WebAssembly source at compile time.
+///
+/// Choose explicitly on both targets: native supports `bytes(expression)` or `file(path)`, while
+/// WASM supports `bytes(expression)` or `url(expression)`. The non-selected expression is
+/// cfg-gated out, so native-only files and WASM-only embedded bytes need not exist on other targets.
+///
+/// ```rust,no_run
+/// # use euphorium::{Soundscape, SoundscapeError};
+/// # fn example() -> Result<(), SoundscapeError> {
+/// let soundscape = Soundscape::new();
+/// let source = euphorium::audio_source! {
+///     native: bytes(include_bytes!("../examples/music/THE UNFORGIVING.mp3")),
+///     wasm: url("/audio/theme.mp3"),
+/// };
+/// let theme = soundscape.create_sound("theme", source)?;
+/// theme.play()?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// Use `wasm: bytes(include_bytes!(...))` when you deliberately want audio embedded in the WASM
+/// binary instead of fetched from a URL.
+#[macro_export]
+macro_rules! audio_source {
+    (native: file($path:expr), wasm: bytes($wasm_bytes:expr) $(,)?) => {{
+        #[cfg(target_arch = "wasm32")]
+        let source = $crate::SoundSource::static_bytes($wasm_bytes);
+        #[cfg(not(target_arch = "wasm32"))]
+        let source = $crate::SoundSource::file($path);
+        source
+    }};
+    (native: bytes($native_bytes:expr), wasm: bytes($wasm_bytes:expr) $(,)?) => {{
+        #[cfg(target_arch = "wasm32")]
+        let source = $crate::SoundSource::static_bytes($wasm_bytes);
+        #[cfg(not(target_arch = "wasm32"))]
+        let source = $crate::SoundSource::static_bytes($native_bytes);
+        source
+    }};
+    (native: file($path:expr), wasm: url($url:expr) $(,)?) => {{
+        #[cfg(target_arch = "wasm32")]
+        let source = $crate::SoundSource::url($url);
+        #[cfg(not(target_arch = "wasm32"))]
+        let source = $crate::SoundSource::file($path);
+        source
+    }};
+    (native: bytes($native_bytes:expr), wasm: url($url:expr) $(,)?) => {{
+        #[cfg(target_arch = "wasm32")]
+        let source = $crate::SoundSource::url($url);
+        #[cfg(not(target_arch = "wasm32"))]
+        let source = $crate::SoundSource::static_bytes($native_bytes);
+        source
+    }};
 }

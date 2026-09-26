@@ -18,10 +18,10 @@ Available constructor families are:
 - `from_static_bytes` and `builder_from_static_bytes` for `include_bytes!` data.
 - `from_shared_bytes` and `builder_from_shared_bytes` for runtime bytes.
 - Native-only `from_file` and `builder_from_file`.
-- Async cross-platform `from_asset` and `builder_from_asset`.
+- WASM-only async `from_url` and `builder_from_url`.
 
-The runtime-byte constructors copy `bytes.as_ref()` in Euphorium. Asset waveform methods
-reuse the browser cache shared by clones of the same `SoundAsset`.
+The runtime-byte constructors copy `bytes.as_ref()` in Euphorium. Browser URL waveform methods
+fetch and decode the full response before returning a waveform builder.
 
 ## Incremental Update Pattern
 

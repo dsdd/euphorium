@@ -4,7 +4,9 @@ use std::{num::NonZeroUsize, ops::Range, sync::Arc, time::Duration};
 
 use rodio::Source;
 
-use crate::{SoundAsset, SoundscapeError, decoder};
+#[cfg(target_arch = "wasm32")]
+use crate::SoundSource;
+use crate::{SoundscapeError, decoder};
 
 /// The minimum and maximum sample amplitude in a section of an audio track.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -207,38 +209,24 @@ impl Waveform {
         Ok(Self::builder_from_source(source))
     }
 
-    /// Decodes an audio asset into a waveform using its native path or browser URL.
+    /// Fetches and decodes a browser URL into a waveform.
     ///
-    /// Prefer [`Self::builder_from_asset`] for long tracks to avoid blocking.
-    pub async fn from_asset(asset: &SoundAsset) -> Result<Self, SoundscapeError> {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            Self::from_file(asset.native_path())
-        }
-
-        #[cfg(target_arch = "wasm32")]
-        {
-            let bytes = asset.load_browser_bytes().await?;
-            Ok(Self::from_source(decoder::from_shared_bytes(bytes)?))
-        }
+    /// Prefer [`Self::builder_from_url`] for long tracks to avoid blocking.
+    #[cfg(target_arch = "wasm32")]
+    pub async fn from_url(url: &str) -> Result<Self, SoundscapeError> {
+        let source = SoundSource::url(url);
+        let bytes = source.load_browser_bytes().await?;
+        Ok(Self::from_source(decoder::from_shared_bytes(bytes)?))
     }
 
-    /// Starts decoding an audio asset into a waveform incrementally.
-    pub async fn builder_from_asset(
-        asset: &SoundAsset,
-    ) -> Result<WaveformBuilder, SoundscapeError> {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            Self::builder_from_file(asset.native_path())
-        }
-
-        #[cfg(target_arch = "wasm32")]
-        {
-            let bytes = asset.load_browser_bytes().await?;
-            Ok(Self::builder_from_source(decoder::from_shared_bytes(
-                bytes,
-            )?))
-        }
+    /// Fetches a browser URL and starts decoding it into a waveform incrementally.
+    #[cfg(target_arch = "wasm32")]
+    pub async fn builder_from_url(url: &str) -> Result<WaveformBuilder, SoundscapeError> {
+        let source = SoundSource::url(url);
+        let bytes = source.load_browser_bytes().await?;
+        Ok(Self::builder_from_source(decoder::from_shared_bytes(
+            bytes,
+        )?))
     }
 
     /// Returns the number of channels in the decoded source.

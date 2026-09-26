@@ -8,16 +8,16 @@ path, which also requires `rust-src`, a shared-memory WASM build, and cross-orig
 ## Assets And First Playback
 
 ```rust
-use euphorium::{SoundAsset, Soundscape, SoundscapeError, SoundSource};
+use euphorium::{Soundscape, SoundscapeError};
 
 fn create_audio() -> Result<Soundscape, SoundscapeError> {
     let soundscape = Soundscape::new();
     soundscape.create_sound(
         "music",
-        SoundSource::asset(SoundAsset::new(
-            "assets/music.mp3",
-            "/assets/music.mp3",
-        )),
+        euphorium::audio_source! {
+            native: file("assets/music.mp3"),
+            wasm: url("/assets/music.mp3"),
+        },
     )?;
     Ok(soundscape)
 }
@@ -36,7 +36,9 @@ opened from a user gesture.
 
 On WASM, the complete response is retained in memory for decoding. Ensure the URL is served, CORS
 allows the application origin, the decoder feature matches the file, and large assets fit the
-browser memory budget. `SoundAsset` clones share a browser-byte cache.
+browser memory budget. Clones of the URL-backed `SoundSource` share their browser-byte cache. To
+embed a web asset in the `.wasm` instead, use `wasm: bytes(include_bytes!(...))` in
+`audio_source!`.
 
 ## Update Loop
 

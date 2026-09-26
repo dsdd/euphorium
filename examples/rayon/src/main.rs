@@ -1,9 +1,7 @@
 use std::sync::{Arc, LazyLock, Mutex};
 
 use eframe::egui;
-use euphorium::{
-    Sound, SoundAsset, SoundSource, Soundscape, format_timestamp_secs, parse_timestamp,
-};
+use euphorium::{Sound, SoundSource, Soundscape, format_timestamp_secs, parse_timestamp};
 use rayon::prelude::*;
 use web_time::{Duration, Instant};
 
@@ -19,11 +17,11 @@ fn assert_euphorium_threading() {
     assert_euphorium_is_send_sync::<SoundSource>();
 }
 
-static SOUND_ASSET: LazyLock<SoundAsset> = LazyLock::new(|| {
-    SoundAsset::new(
-        concat!(env!("CARGO_MANIFEST_DIR"), "/../music/polar 240 yay.mp3"),
-        "polar 240 yay.mp3",
-    )
+static SOUND_SOURCE: LazyLock<SoundSource> = LazyLock::new(|| {
+    euphorium::audio_source! {
+        native: file(concat!(env!("CARGO_MANIFEST_DIR"), "/../music/polar 240 yay.mp3")),
+        wasm: url("polar 240 yay.mp3"),
+    }
 });
 
 euphorium::sound_key! {
@@ -52,7 +50,7 @@ impl App {
         let app = App::default();
         let _ = app
             .music()
-            .set_source(SoundSource::asset(SOUND_ASSET.clone()));
+            .set_source(SOUND_SOURCE.clone());
 
         #[cfg(all(target_arch = "wasm32", feature = "nightly"))]
         if let Err(error) = app

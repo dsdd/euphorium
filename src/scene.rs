@@ -1455,8 +1455,8 @@ impl Sound {
                 let sound = state.sound(self.id)?;
                 (sound.source.clone(), sound.source_revision)
             };
-            if let SoundSource::Asset(asset) = source {
-                let bytes = asset.load_browser_bytes().await?;
+            if let SoundSource::Url(..) = source {
+                let bytes = source.load_browser_bytes().await?;
                 let mut state = state.lock().unwrap();
                 let sound = state.sound_mut(self.id)?;
                 if sound.source_revision != revision {
@@ -1508,9 +1508,10 @@ impl Sound {
         if !sound.source_loaded {
             match &sound.source {
                 SoundSource::Empty => return Err(SoundscapeError::NoAudioSource),
-                SoundSource::Asset(asset) => {
-                    let asset = asset.clone();
-                    sound.start_asset_playback(&asset)?;
+                #[cfg(target_arch = "wasm32")]
+                SoundSource::Url(..) => {
+                    let source = sound.source.clone();
+                    sound.start_url_playback(&source)?;
                     if !sound.is_loading() {
                         sound.source_loaded = true;
                     }

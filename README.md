@@ -15,7 +15,7 @@ cargo add euphorium
 ## Usage
 
 ```rust,no_run
-use euphorium::{SoundAsset, Soundscape, SoundscapeError, SoundSource};
+use euphorium::{Soundscape, SoundscapeError, SoundSource};
 
 fn main() -> Result<(), SoundscapeError> {
     // One Soundscape owns the output and every sound in the application.
@@ -51,10 +51,14 @@ fn where_is_my_audio_at(soundscape: &Soundscape) -> Result<(), SoundscapeError> 
 }
 
 fn play_my_audio_cross_platform() -> Result<(), SoundscapeError> {
-    // Use file path "assets/music.mp3" on native and URL "audio.mp3" on web.
-    let asset = SoundAsset::new("assets/music.mp3", "audio.mp3");
     let soundscape = Soundscape::new();
-    let sound = soundscape.create_sound("music", SoundSource::asset(asset))?;
+    let sound = soundscape.create_sound(
+        "music",
+        euphorium::audio_source! {
+            native: file("assets/music.mp3"),
+            wasm: url("audio.mp3"),
+        },
+    )?;
     sound.play()?;
 
     // Call this from the application's update loop. It completes browser loads

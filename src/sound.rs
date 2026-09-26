@@ -18,8 +18,8 @@ use dasp_sample::FromSample;
 use rodio::{Player, Source};
 
 use crate::{
-    PlaybackRangeSource, SoundAsset, SoundEffects, SoundSource, SoundscapeError, decoder,
-    format_timestamp, scene::SoundGroupId, wsola::Wsola,
+    PlaybackRangeSource, SoundEffects, SoundSource, SoundscapeError, decoder, format_timestamp,
+    scene::SoundGroupId, wsola::Wsola,
 };
 
 /// The current playback lifecycle state of a [`crate::Sound`].
@@ -237,9 +237,10 @@ impl SoundNode {
         #[cfg(target_arch = "wasm32")]
         if !source_loaded
             && wants_playing
-            && let SoundSource::Asset(asset) = self.source.clone()
+            && let SoundSource::Url(..) = self.source.clone()
         {
-            self.start_asset_playback(&asset)?;
+            let source = self.source.clone();
+            self.start_url_playback(&source)?;
         }
 
         Ok(())
@@ -254,19 +255,12 @@ impl SoundNode {
             }
             #[cfg(not(target_arch = "wasm32"))]
             SoundSource::File(path) => decoder::from_file(path)?.total_duration(),
-            SoundSource::Asset(asset) => {
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    decoder::from_file(asset.native_path())?.total_duration()
-                }
-
-                #[cfg(target_arch = "wasm32")]
-                {
-                    let Some(bytes) = asset.cached_browser_bytes() else {
-                        return Ok(SourceMetadata::Unloaded);
-                    };
-                    decoder::from_shared_bytes(bytes)?.total_duration()
-                }
+            #[cfg(target_arch = "wasm32")]
+            SoundSource::Url(..) => {
+                let Some(bytes) = source.cached_browser_bytes() else {
+                    return Ok(SourceMetadata::Unloaded);
+                };
+                decoder::from_shared_bytes(bytes)?.total_duration()
             }
         };
         Ok(SourceMetadata::Loaded(duration))
@@ -386,19 +380,14 @@ impl SoundNode {
                     decoder::from_file(path).map_err(|error| self.record_failure(error))?;
                 self.play_source_at(source, Some(position))
             }
-            SoundSource::Asset(asset) => {
-                #[cfg(not(target_arch = "wasm32"))]
-                let source = decoder::from_file(asset.native_path())
-                    .map_err(|error| self.record_failure(error))?;
-
-                #[cfg(target_arch = "wasm32")]
+            #[cfg(target_arch = "wasm32")]
+            SoundSource::Url(..) => {
                 let source = decoder::from_shared_bytes(
-                    asset
+                    self.source
                         .cached_browser_bytes()
                         .ok_or_else(|| self.record_failure(SoundscapeError::NoAudioSource))?,
                 )
                 .map_err(|error| self.record_failure(error))?;
-
                 self.play_source_at(source, Some(position))
             }
         }
@@ -468,43 +457,34 @@ impl SoundNode {
         Ok(())
     }
 
-    /// Starts playing an audio asset while keeping browser loading state in this instance.
-    ///
-    /// Native assets start synchronously. Browser assets are fetched in the background and
-    /// completed by polling the owning scene.
-    pub fn start_asset_playback(&mut self, asset: &SoundAsset) -> Result<(), SoundscapeError> {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.play_file(asset.native_path())
+    /// Starts loading and playing a browser URL in the background.
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn start_url_playback(
+        &mut self,
+        source: &SoundSource,
+    ) -> Result<(), SoundscapeError> {
+        if self.pending_playback.is_some() {
+            return Ok(());
         }
 
-        #[cfg(target_arch = "wasm32")]
-        {
-            if self.pending_playback.is_some() {
-                return Ok(());
-            }
-
-            if let Some(bytes) = asset.cached_browser_bytes() {
-                let source = decoder::from_shared_bytes(bytes.clone())
-                    .map_err(|error| self.record_failure(error))?;
-
-                self.play_source(source)?;
-                return Ok(());
-            }
-
-            let pending_playback = PendingPlayback::default();
-            let pending_result = pending_playback.clone();
-            let asset = asset.clone();
-
-            wasm_bindgen_futures::spawn_local(async move {
-                *pending_result.lock().unwrap() = Some(asset.load_browser_bytes().await);
-            });
-
-            self.pending_playback = Some(pending_playback);
-            self.set_playback_state(PlaybackState::Loading);
-
-            Ok(())
+        if let Some(bytes) = source.cached_browser_bytes() {
+            let decoded =
+                decoder::from_shared_bytes(bytes).map_err(|error| self.record_failure(error))?;
+            self.play_source(decoded)?;
+            return Ok(());
         }
+
+        let pending_playback = PendingPlayback::default();
+        let pending_result = pending_playback.clone();
+        let source = source.clone();
+
+        wasm_bindgen_futures::spawn_local(async move {
+            *pending_result.lock().unwrap() = Some(source.load_browser_bytes().await);
+        });
+
+        self.pending_playback = Some(pending_playback);
+        self.set_playback_state(PlaybackState::Loading);
+        Ok(())
     }
 
     /// Completes a browser asset playback once its fetch has finished.
@@ -677,17 +657,13 @@ impl SoundNode {
             SoundSource::File(path) => {
                 self.seek_with_decode_source(decoder::from_file(path)?, position)
             }
-            SoundSource::Asset(asset) => {
-                #[cfg(not(target_arch = "wasm32"))]
-                let source = decoder::from_file(asset.native_path())?;
-
-                #[cfg(target_arch = "wasm32")]
+            #[cfg(target_arch = "wasm32")]
+            SoundSource::Url(..) => {
                 let source = decoder::from_shared_bytes(
-                    asset
+                    self.source
                         .cached_browser_bytes()
                         .ok_or(SoundscapeError::NoAudioSource)?,
                 )?;
-
                 self.seek_with_decode_source(source, position)
             }
         }

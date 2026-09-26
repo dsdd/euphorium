@@ -5,7 +5,7 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-use euphorium::{Sound, SoundAsset, SoundSource, Soundscape};
+use euphorium::{Sound, SoundSource, Soundscape};
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::{JsCast, JsValue, closure::Closure};
 #[cfg(target_arch = "wasm32")]
@@ -105,7 +105,7 @@ impl PlaybackSource {
     fn source(&self) -> SoundSource {
         match self {
             Self::StaticBytes => SoundSource::static_bytes(TEST_AUDIO_BYTES),
-            Self::Resource(resource) => SoundSource::asset(resource.asset.clone()),
+            Self::Resource(resource) => resource.source.clone(),
         }
     }
 
@@ -121,7 +121,7 @@ impl PlaybackSource {
 }
 
 struct TestResource {
-    asset: SoundAsset,
+    source: SoundSource,
     #[cfg(target_arch = "wasm32")]
     object_url: String,
 }
@@ -130,7 +130,7 @@ impl TestResource {
     #[cfg(not(target_arch = "wasm32"))]
     fn new() -> Self {
         Self {
-            asset: SoundAsset::new(TEST_AUDIO_PATH, "unused-in-native-tests"),
+            source: SoundSource::file(TEST_AUDIO_PATH),
         }
     }
 
@@ -145,7 +145,7 @@ impl TestResource {
             .expect("audio object URL should be created");
 
         Self {
-            asset: SoundAsset::new("unused-in-browser-tests", &object_url),
+            source: SoundSource::url(&object_url),
             object_url,
         }
     }
@@ -153,7 +153,7 @@ impl TestResource {
 
 impl Drop for TestResource {
     fn drop(&mut self) {
-        self.asset.clear_browser_cache();
+        self.source.clear_browser_cache();
 
         #[cfg(target_arch = "wasm32")]
         web_sys::Url::revoke_object_url(&self.object_url)

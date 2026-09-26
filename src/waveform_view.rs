@@ -12,7 +12,7 @@ use std::{num::NonZeroUsize, ops::Range, time::Duration};
 
 use rodio::Source;
 
-use crate::{SoundAsset, SoundscapeError, Waveform, WaveformBuilder, WaveformSlice};
+use crate::{SoundscapeError, Waveform, WaveformBuilder, WaveformSlice};
 
 /// Result of [`WaveformView::poll_visible`] and
 /// [`WaveformView::poll_visible_with_budget`].
@@ -164,11 +164,12 @@ impl WaveformView {
         }
     }
 
-    /// Starts decoding an audio asset, replacing the current track.
+    /// Fetches and starts decoding a browser URL, replacing the current track.
     ///
     /// On error the view is cleared and the error is returned.
-    pub async fn set_asset(&mut self, asset: &SoundAsset) -> Result<(), SoundscapeError> {
-        match Waveform::builder_from_asset(asset).await {
+    #[cfg(target_arch = "wasm32")]
+    pub async fn set_url(&mut self, url: &str) -> Result<(), SoundscapeError> {
+        match Waveform::builder_from_url(url).await {
             Ok(builder) => {
                 self.set_builder(Some(builder));
                 Ok(())

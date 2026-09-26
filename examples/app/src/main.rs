@@ -9,7 +9,7 @@ use std::{
 use eframe::egui;
 use euphorium::{
     AutomaticGainEffect, DistortionEffect, FilterEffect, LimiterEffect, Output, ReverbEffect,
-    Sound, SoundAsset, SoundEffects, SoundSource, Soundscape, WaveformView, format_timestamp_secs,
+    Sound, SoundEffects, SoundSource, Soundscape, WaveformView, format_timestamp_secs,
     parse_timestamp,
 };
 use web_time::Duration;
@@ -77,7 +77,9 @@ static GLOBAL: CountingAllocator = CountingAllocator;
 struct Song {
     title: &'static str,
     bytes: &'static [u8],
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     native_path: &'static str,
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     wasm_url: &'static str,
 }
 
@@ -104,10 +106,15 @@ const SONGS: [Song; 3] = [
         wasm_url: "polar 240 yay.mp3",
     },
 ];
-static SOUND_ASSET_PER_SONG: LazyLock<Vec<SoundAsset>> = LazyLock::new(|| {
+static SOUND_SOURCE_PER_SONG: LazyLock<Vec<SoundSource>> = LazyLock::new(|| {
     SONGS
         .iter()
-        .map(|song| SoundAsset::new(song.native_path, song.wasm_url))
+        .map(|song| {
+            euphorium::audio_source! {
+                native: file(song.native_path),
+                wasm: url(song.wasm_url),
+            }
+        })
         .collect()
 });
 
@@ -160,7 +167,7 @@ impl App {
         let song = SONGS[self.selected_song];
         match self.music_mode {
             MusicMode::StaticBytes => SoundSource::static_bytes(song.bytes),
-            MusicMode::File => SoundSource::asset(SOUND_ASSET_PER_SONG[self.selected_song].clone()),
+            MusicMode::File => SOUND_SOURCE_PER_SONG[self.selected_song].clone(),
         }
     }
 
@@ -668,8 +675,8 @@ impl eframe::App for App {
                                     )
                                     .clicked()
                                 {
-                                    for asset in SOUND_ASSET_PER_SONG.iter() {
-                                        asset.clear_browser_cache();
+                                    for source in SOUND_SOURCE_PER_SONG.iter() {
+                                        source.clear_browser_cache();
                                     }
                                 }
                             }

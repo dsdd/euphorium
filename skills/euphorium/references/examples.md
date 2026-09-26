@@ -58,10 +58,10 @@ descendants without overwriting their local volume.
 let soundscape = euphorium::Soundscape::new();
 let music = soundscape.create_sound(
     "music",
-    euphorium::SoundSource::asset(euphorium::SoundAsset::new(
-        "assets/music.mp3",
-        "/assets/music.mp3",
-    )),
+    euphorium::audio_source! {
+        native: file("assets/music.mp3"),
+        wasm: url("/assets/music.mp3"),
+    },
 )?;
 
 // Call synchronously from a browser gesture.
