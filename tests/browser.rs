@@ -130,7 +130,7 @@ async fn soundscape_owns_pending_url_playback_and_duration() {
 #[wasm_bindgen_test]
 async fn replacing_playing_sound_with_uncached_url_starts_loading() {
     let first = SoundSource::url(WAV_DATA_URL);
-    let second = SoundSource::url(WAV_DATA_URL);
+    let second = SoundSource::url(format!("{WAV_DATA_URL}#replacement"));
     let soundscape = Soundscape::new();
     let sound = soundscape
         .create_sound("replacement", first)
