@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.5.0] - 2026-09-26
+
+### Added
+
+- Added the `audio_source!` macro to select native file or byte sources and WebAssembly URL or
+  byte sources at compile time.
+- Added WebAssembly URL-based waveform APIs: `Waveform::from_url`, `Waveform::builder_from_url`,
+  and `WaveformView::set_url`.
+
+### Changed
+
+- Made audio sources target-specific and moved shared browser-byte caching onto `SoundSource`.
+
+### Breaking
+
+- Removed `SoundAsset`, `SoundSource::asset`, and the asset-based waveform APIs. Use
+  `audio_source!` for cross-platform sources and the URL-based waveform APIs on WebAssembly.
+
 ## [0.4.0] - 2026-09-12
 
 ### Added
