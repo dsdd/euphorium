@@ -114,7 +114,7 @@ pub enum OutputError {
         backend: Backend,
         /// The error returned by CPAL while initializing the backend.
         #[source]
-        source: rodio::cpal::HostUnavailable,
+        source: rodio::cpal::Error,
     },
 
     /// The requested backend has no output device.
@@ -128,7 +128,7 @@ pub enum OutputError {
         backend: Backend,
         /// The error returned by CPAL while listing devices.
         #[source]
-        source: rodio::cpal::DevicesError,
+        source: rodio::cpal::Error,
     },
 
     /// The requested output device could not be found.

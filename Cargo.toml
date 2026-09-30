@@ -1,6 +1,6 @@
 [package]
 name = "euphorium"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
 description = "Painless audio playback for native and web platforms"
 license = "MIT OR Apache-2.0"
@@ -32,9 +32,9 @@ harness = false
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"], optional = true }
-cpal = "0.17"
+cpal = "0.18"
 dasp_sample = "0.11"
-rodio = { version = "0.22", default-features = false, features = [
+rodio = { package = "euphorium-rodio", path = "rodio", version = "0.22.2", default-features = false, features = [
     "playback",
     "wasm-bindgen",
 ] }
@@ -60,7 +60,7 @@ fastrand = { version = "2", features = ["js"] }
 include_dir = "0.7"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-cpal = { version = "0.17", features = ["wasm-bindgen"] }
+cpal = { version = "0.18", features = ["wasm-bindgen"] }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 wasm_sync = "0.1"

@@ -244,6 +244,7 @@ impl SoundEffects {
                 attack_time: effect.attack,
                 release_time: effect.release,
                 absolute_max_gain: effect.maximum_gain,
+                ..AutomaticGainControlSettings::default()
             }));
         }
         if let Some(effect) = self.reverb {
