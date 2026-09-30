@@ -546,7 +546,7 @@ dependencies = [
 
 [[package]]
 name = "euphorium-rodio"
-version = "0.22.2"
+version = "0.22.2-euph.1"
 dependencies = [
  "cpal",
  "dasp_sample",

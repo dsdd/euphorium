@@ -315,22 +315,22 @@ impl SoundscapeState {
         let effects = group.effects;
         let volume = if group.muted { 0.0 } else { group.volume };
         let source = effects.apply(source);
-        let player = parent.map(|parent| {
-            let parent_mixer = self
-                .group(parent)
+        let parent_mixer = parent.map(|parent| {
+            self.group(parent)
                 .expect("a group's parent must remain valid")
                 .mixer
-                .clone();
-            Player::connect_new(&parent_mixer)
+                .clone()
         });
 
         let group = self
             .group_mut(id)
             .expect("newly created groups remain valid");
-        if let Some(player) = player {
+        if let Some(parent_mixer) = parent_mixer {
+            let (player, queue) = Player::new();
             player.set_volume(volume);
             player.append(source);
             player.play();
+            parent_mixer.add(queue);
             group.bus_player = Some(player);
             group.pending_source = None;
         } else {
@@ -348,7 +348,7 @@ impl SoundscapeState {
         let Some(source) = source else {
             return;
         };
-        let Some(player) = output.connect_player() else {
+        let Some(mixer) = output.mixer() else {
             self.group_mut(self.root)
                 .expect("the root group always exists")
                 .pending_source = Some(source);
@@ -357,9 +357,11 @@ impl SoundscapeState {
         let root = self
             .group_mut(self.root)
             .expect("the root group always exists");
+        let (player, queue) = Player::new();
         player.set_volume(if root.muted { 0.0 } else { root.volume });
         player.append(source);
         player.play();
+        mixer.add(queue);
         root.bus_player = Some(player);
     }
 

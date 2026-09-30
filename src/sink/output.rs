@@ -4,7 +4,7 @@ use std::{
 };
 
 use rodio::{
-    DeviceSinkBuilder, DeviceSinkError, DeviceTrait, MixerDeviceSink, Player,
+    DeviceSinkBuilder, DeviceSinkError, DeviceTrait, MixerDeviceSink,
     cpal::{BufferSize, traits::HostTrait},
 };
 
@@ -543,12 +543,12 @@ impl Output {
         self.mixer_device_sink.lock().unwrap().is_some()
     }
 
-    pub(crate) fn connect_player(&self) -> Option<Player> {
+    pub(crate) fn mixer(&self) -> Option<rodio::mixer::Mixer> {
         self.mixer_device_sink
             .lock()
             .unwrap()
             .as_ref()
-            .map(|mixer_device_sink| Player::connect_new(mixer_device_sink.mixer()))
+            .map(|mixer_device_sink| mixer_device_sink.mixer().clone())
     }
 
     /// Controls whether dropping the underlying device sink logs a message.

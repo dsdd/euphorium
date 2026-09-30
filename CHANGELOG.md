@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.6.0] - Unreleased
+
+### Fixed
+
+- Fixed the background-playback crash caused by Rayon position queries and player
+  control updates contending with AudioWorklet rendering, using atomic player state
+  in the Rodio fork.
+- Prepare sound and group queues before connecting them to audio rendering, avoiding
+  queue-mutex contention during playback startup and source replacement.
+
+### Changed
+
+- Use the `euphorium-rodio` fork, checked out locally as the `rodio/` Git submodule
+  and resolved from crates.io in published packages.
+- Use the fork's defaults for automatic gain control's peak tracking and gain floor.
+
+### Breaking
+
+- Updated CPAL to 0.18. `OutputError::BackendUnavailable` and `OutputError::ListDevices`
+  now carry CPAL's unified `Error` type.
+- The `rodio` re-export now refers to `euphorium-rodio`, not the upstream `rodio`
+  package. Use `euphorium::rodio` or alias the fork when sharing Rodio types with
+  Euphorium.
+
 ## [0.5.0] - 2026-09-26
 
 ### Added

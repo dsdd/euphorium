@@ -337,7 +337,7 @@ impl SoundNode {
         self.position_is_held = true;
         self.duration = duration;
 
-        let new_player = self.connect_voice();
+        let (new_player, queue) = Player::new();
         let volume = self.volume();
 
         new_player.set_volume(volume);
@@ -350,6 +350,9 @@ impl SoundNode {
             new_player.play();
         }
 
+        // Finish preparing the queue before the renderer can consume it. Appending
+        // to an already connected queue can contend on its mutex in an AudioWorklet.
+        self.mixer.add(queue);
         self.voice = new_player;
         self.position_offset = position;
         self.player_position_anchor = Duration::ZERO;

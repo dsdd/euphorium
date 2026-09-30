@@ -3,18 +3,18 @@ name = "euphorium"
 version = "0.6.0"
 edition = "2024"
 description = "Painless audio playback for native and web platforms"
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/egakareta/euphorium"
 documentation = "https://docs.rs/euphorium"
 readme = "README.md"
+repository = "https://github.com/egakareta/euphorium"
+license = "MIT OR Apache-2.0"
 keywords = ["audio", "playback", "rodio", "wasm", "waveform"]
 categories = ["multimedia::audio", "wasm"]
 include = [
-    "/src/**",
     "/CHANGELOG.md",
     "/LICENSE-APACHE",
     "/LICENSE-MIT",
     "/README.md",
+    "/src/**",
 ]
 
 [lib]
@@ -27,21 +27,48 @@ path = "src/cli.rs"
 required-features = ["cli"]
 
 [[bench]]
-name = "controls"
 harness = false
+name = "controls"
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"], optional = true }
 cpal = "0.18"
 dasp_sample = "0.11"
-rodio = { package = "euphorium-rodio", path = "rodio", version = "0.22.2", default-features = false, features = [
+log = "0.4"
+parking_lot_core = { version = "0.9", optional = true }
+rodio = { package = "euphorium-rodio", path = "rodio", version = "0.22.2-euph.1", default-features = false, features = [
     "playback",
     "wasm-bindgen",
 ] }
-log = "0.4"
-parking_lot_core = { version = "0.9", optional = true }
 thiserror = "2"
 web-time = "1"
+
+[dev-dependencies]
+fastrand = { version = "2", features = ["js"] }
+include_dir = "0.7"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+criterion = "0.8"
+pollster = "1"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+cpal = { version = "0.18", features = ["wasm-bindgen"] }
+getrandom = { version = "0.4", features = ["wasm_js"] }
+js-sys = "0.3"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+wasm_sync = "0.1"
+web-sys = { version = "0.3", features = [
+    "AudioContext",
+    "AudioContextState",
+    "Response",
+    "Window",
+    "console",
+] }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"
+web-sys = { version = "0.3", features = ["Blob", "Url"] }
 
 [features]
 default = ["cli", "mp3", "vorbis", "wav"]
@@ -54,30 +81,3 @@ mp4 = ["rodio/mp4"]
 nightly = ["cpal/audioworklet", "parking_lot_core/nightly"]
 vorbis = ["rodio/vorbis"]
 wav = ["rodio/wav"]
-
-[dev-dependencies]
-fastrand = { version = "2", features = ["js"] }
-include_dir = "0.7"
-
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-cpal = { version = "0.18", features = ["wasm-bindgen"] }
-wasm-bindgen = "0.2"
-wasm-bindgen-futures = "0.4"
-wasm_sync = "0.1"
-js-sys = "0.3"
-getrandom = { version = "0.4", features = ["wasm_js"] }
-web-sys = { version = "0.3", features = [
-    "Window",
-    "AudioContext",
-    "AudioContextState",
-    "Response",
-    "console",
-] }
-
-[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-criterion = "0.8"
-pollster = "1"
-
-[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
-wasm-bindgen-test = "0.3"
-web-sys = { version = "0.3", features = ["Blob", "Url"] }
