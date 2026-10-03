@@ -89,6 +89,20 @@ pub enum SoundscapeError {
     #[error("playback speed must be a finite positive number")]
     InvalidSpeed,
 
+    /// A spatial audio parameter is outside its supported range.
+    #[error("invalid spatial audio setting: {0}")]
+    InvalidSpatialSetting(&'static str),
+
+    /// A spatial sound was configured as mono-only but its source has multiple channels.
+    #[error(
+        "spatial playback requires mono input; use SpatialInput::DownmixToMono for multichannel sources"
+    )]
+    SpatialInputNotMono,
+
+    /// A spatial control was used on a sound without spatial settings.
+    #[error("the sound is not spatialized")]
+    SoundNotSpatialized,
+
     /// A playback operation required a previously loaded or played source.
     #[error("no audio source is available")]
     NoAudioSource,

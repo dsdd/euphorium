@@ -9,7 +9,7 @@ use std::{
     ops::Range,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::Duration,
 };
@@ -19,7 +19,12 @@ use rodio::{Player, Source};
 
 use crate::{
     PlaybackRangeSource, SoundEffects, SoundSource, SoundscapeError, decoder, format_timestamp,
-    scene::SoundGroupId, wsola::Wsola,
+    scene::SoundGroupId,
+    spatial::{
+        SpatialAudioSettings, SpatialSceneControls, SpatialSound, SpatialSoundControls,
+        SpatialSource,
+    },
+    wsola::Wsola,
 };
 
 /// The current playback lifecycle state of a [`crate::Sound`].
@@ -76,6 +81,12 @@ pub struct SoundNode {
     preserve_pitch: bool,
     volume: f32,
     effects: SoundEffects,
+    spatial: Option<SpatialSound>,
+    spatial_audio: SpatialAudioSettings,
+    spatial_scene: Arc<SpatialSceneControls>,
+    spatial_controls: Arc<SpatialSoundControls>,
+    spatial_clock: Option<Arc<AtomicU64>>,
+    spatial_clock_anchor: u64,
 
     /// Whether playback repeats at its configured boundary.
     looping: Arc<AtomicBool>,
@@ -118,6 +129,8 @@ impl SoundNode {
         group: SoundGroupId,
         source: SoundSource,
         mixer: rodio::mixer::Mixer,
+        spatial_audio: SpatialAudioSettings,
+        spatial_scene: Arc<SpatialSceneControls>,
     ) -> Result<Self, SoundscapeError> {
         let voice = Player::connect_new(&mixer);
         let mut sound = Self {
@@ -137,6 +150,12 @@ impl SoundNode {
             preserve_pitch: false,
             volume: 1.0,
             effects: SoundEffects::default(),
+            spatial: None,
+            spatial_audio,
+            spatial_controls: Arc::new(SpatialSoundControls::new()),
+            spatial_scene,
+            spatial_clock: None,
+            spatial_clock_anchor: 0,
             looping: Arc::new(AtomicBool::new(false)),
             loop_range: None,
             position_is_held: true,
@@ -331,7 +350,7 @@ impl SoundNode {
             position,
             self.looping.clone(),
         );
-        let source = self.process_source(source);
+        let source = self.process_source(source)?;
         self.position_offset = position;
         self.player_position_anchor = Duration::ZERO;
         self.position_is_held = true;
@@ -412,17 +431,39 @@ impl SoundNode {
         Ok((range.start, Some(end)))
     }
 
-    fn process_source<S>(&self, source: S) -> Box<dyn Source<Item = f32> + Send>
+    fn process_source<S>(
+        &mut self,
+        source: S,
+    ) -> Result<Box<dyn Source<Item = f32> + Send>, SoundscapeError>
     where
         S: Source + Send + 'static,
         f32: FromSample<S::Item>,
     {
         let source = self.effects.apply(source);
 
-        if self.preserve_pitch {
+        let source: Box<dyn Source<Item = f32> + Send> = if self.preserve_pitch {
             Box::new(Wsola::new(source, self.speed))
         } else {
             source
+        };
+
+        if let Some(spatial) = self.spatial {
+            let clock = Arc::new(AtomicU64::new(0));
+            let processed = SpatialSource::new(
+                source,
+                spatial,
+                &self.spatial_audio,
+                self.spatial_scene.clone(),
+                self.spatial_controls.clone(),
+                clock.clone(),
+            )?;
+            self.spatial_clock = Some(clock);
+            self.spatial_clock_anchor = 0;
+            Ok(Box::new(processed))
+        } else {
+            self.spatial_clock = None;
+            self.spatial_clock_anchor = 0;
+            Ok(source)
         }
     }
 
@@ -632,6 +673,7 @@ impl SoundNode {
         self.position_offset = position;
         self.player_position_anchor = player_position;
         self.position_is_held = false;
+        self.spatial_clock_anchor = 0;
 
         Ok(())
     }
@@ -736,7 +778,7 @@ impl SoundNode {
             position,
             self.looping.clone(),
         );
-        let source = self.process_source(source);
+        let source = self.process_source(source)?;
 
         let volume = self.volume();
 
@@ -774,6 +816,47 @@ impl SoundNode {
     /// Returns the current rodio post-processing settings.
     pub fn effects(&self) -> SoundEffects {
         self.effects
+    }
+
+    pub(crate) fn spatial(&self) -> Option<SpatialSound> {
+        self.spatial
+    }
+
+    pub(crate) fn set_spatial(&mut self, spatial: Option<SpatialSound>) {
+        self.spatial_controls.set(spatial);
+        self.spatial = spatial;
+    }
+
+    pub(crate) fn set_spatial_audio(&mut self, settings: SpatialAudioSettings) {
+        self.spatial_audio = settings;
+    }
+
+    pub(crate) fn set_emitter(
+        &mut self,
+        emitter: crate::EmitterState,
+    ) -> Result<(), SoundscapeError> {
+        emitter.validate()?;
+        let spatial = self
+            .spatial
+            .as_mut()
+            .ok_or(SoundscapeError::SoundNotSpatialized)?;
+        spatial.emitter = emitter;
+        self.spatial_controls.set(Some(*spatial));
+        Ok(())
+    }
+
+    pub(crate) fn set_occlusion(
+        &mut self,
+        occlusion: crate::Occlusion,
+    ) -> Result<(), SoundscapeError> {
+        occlusion.validate()?;
+        let spatial = self
+            .spatial
+            .as_mut()
+            .ok_or(SoundscapeError::SoundNotSpatialized)?;
+        spatial.occlusion = occlusion;
+        self.spatial_controls.set(Some(*spatial));
+        Ok(())
     }
 
     /// Replaces the rodio post-processing chain.
@@ -821,6 +904,41 @@ impl SoundNode {
     }
 
     fn position_at_player_time(&self, player_position: Duration) -> Duration {
+        if let Some(clock) = &self.spatial_clock {
+            if self.position_is_held {
+                return self.position_offset;
+            }
+            let elapsed = Duration::from_nanos(
+                clock
+                    .load(Ordering::Relaxed)
+                    .saturating_sub(self.spatial_clock_anchor),
+            );
+            let elapsed = if self.preserve_pitch {
+                elapsed.mul_f32(self.speed)
+            } else {
+                elapsed
+            };
+            let position = self.position_offset.saturating_add(elapsed);
+            if self.is_looping()
+                && let Ok((start, Some(end))) = self.playback_bounds(self.duration())
+                && position >= end
+            {
+                let range_duration = end - start;
+                let range_nanos = range_duration.as_nanos();
+                if range_nanos > 0 {
+                    let position_nanos = position.saturating_sub(start).as_nanos() % range_nanos;
+                    return start
+                        + Duration::new(
+                            (position_nanos / 1_000_000_000) as u64,
+                            (position_nanos % 1_000_000_000) as u32,
+                        );
+                }
+            }
+            return self
+                .duration()
+                .map_or(position, |duration| position.min(duration));
+        }
+
         let elapsed = player_position.saturating_sub(self.player_position_anchor);
         let mut position = self
             .position_offset
@@ -993,6 +1111,9 @@ impl SoundNode {
             let player_position = self.voice.get_pos();
             self.position_offset = self.position_at_player_time(player_position);
             self.player_position_anchor = player_position;
+            if let Some(clock) = &self.spatial_clock {
+                self.spatial_clock_anchor = clock.load(Ordering::Relaxed);
+            }
         }
 
         self.speed = speed;

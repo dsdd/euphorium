@@ -17,7 +17,9 @@ use wasm_sync::Mutex;
 
 use crate::{
     Backend, Device, Output, OutputError, PlaybackEvent, PlaybackState, SoundEffects, SoundSource,
-    SoundscapeError, sound::SoundNode,
+    SoundscapeError,
+    sound::SoundNode,
+    spatial::{ListenerState, SpatialAudioSettings, SpatialSceneControls},
 };
 
 #[cfg(target_arch = "wasm32")]
@@ -216,6 +218,9 @@ struct SoundscapeState {
     events: VecDeque<SoundscapeEvent>,
     event_capacity: usize,
     last_output_error: Option<String>,
+    spatial_audio: SpatialAudioSettings,
+    listener: ListenerState,
+    spatial_controls: Arc<SpatialSceneControls>,
 }
 
 fn new_bus() -> (Mixer, MixerSource) {
@@ -251,6 +256,9 @@ fn validate_speed(speed: f32) -> Result<(), SoundscapeError> {
 
 impl SoundscapeState {
     fn new(preferred_backend: Option<Backend>) -> Self {
+        let spatial_audio = SpatialAudioSettings::default();
+        let listener = ListenerState::default();
+        let spatial_controls = Arc::new(SpatialSceneControls::new(listener, &spatial_audio));
         let (root_mixer, root_source) = new_bus();
         let mut groups = Arena::default();
         let (index, generation) = groups.insert(GroupEntry {
@@ -274,6 +282,9 @@ impl SoundscapeState {
             events: VecDeque::new(),
             event_capacity: usize::MAX,
             last_output_error: None,
+            spatial_audio,
+            listener,
+            spatial_controls,
         };
         state.attach_group_source(root, root_source);
         state
@@ -868,7 +879,16 @@ impl<K> Soundscape<K> {
         }
 
         let group_mixer = state.group(group)?.mixer.clone();
-        let sound = SoundNode::new(name, group, source, group_mixer)?;
+        let spatial_audio = state.spatial_audio.clone();
+        let spatial_controls = state.spatial_controls.clone();
+        let sound = SoundNode::new(
+            name,
+            group,
+            source,
+            group_mixer,
+            spatial_audio,
+            spatial_controls,
+        )?;
         let (index, generation) = state.sounds.insert(sound);
         let id = SoundId { index, generation };
         Ok(Sound {
@@ -881,6 +901,43 @@ impl<K> Soundscape<K> {
     pub fn root_group(&self) -> SoundGroup {
         let root = self.inner.lock().unwrap().root;
         self.group_handle(root)
+    }
+
+    /// Replaces the scene-wide spatial rendering and Doppler settings.
+    ///
+    /// Listener-independent DSP controls are published to active spatial sources without
+    /// rebuilding their decoders. Changing the renderer or HRTF profile affects sources on their
+    /// next playback; active sources keep the profile with which they were started.
+    pub fn set_spatial_audio(&self, settings: SpatialAudioSettings) -> Result<(), SoundscapeError> {
+        settings.validate()?;
+        let mut state = self.inner.lock().unwrap();
+        state.spatial_controls.set_settings(&settings);
+        state.spatial_audio = settings.clone();
+        let ids = state.sounds.ids();
+        for (index, generation) in ids {
+            let id = SoundId { index, generation };
+            state.sound_mut(id)?.set_spatial_audio(settings.clone());
+        }
+        Ok(())
+    }
+
+    /// Returns the scene-wide spatial rendering and Doppler settings.
+    pub fn spatial_audio(&self) -> SpatialAudioSettings {
+        self.inner.lock().unwrap().spatial_audio.clone()
+    }
+
+    /// Updates the listener transform and velocity as one snapshot.
+    pub fn set_listener(&self, listener: ListenerState) -> Result<(), SoundscapeError> {
+        let listener = listener.normalized()?;
+        let mut state = self.inner.lock().unwrap();
+        state.spatial_controls.set_listener(listener);
+        state.listener = listener;
+        Ok(())
+    }
+
+    /// Returns the current listener transform and velocity.
+    pub fn listener(&self) -> ListenerState {
+        self.inner.lock().unwrap().listener
     }
 
     /// Creates a mixer group directly beneath the root.
@@ -1757,6 +1814,50 @@ impl Sound {
             .preserves_pitch())
     }
 
+    /// Enables point-source spatial rendering or updates this sound's spatial settings.
+    ///
+    /// Configuration takes effect the next time playback starts. Emitter and occlusion changes
+    /// can be published to an already spatialized voice with [`Self::set_emitter`] and
+    /// [`Self::set_occlusion`]. Mono-only sources reject multichannel audio when playback begins;
+    /// use [`crate::SpatialInput::DownmixToMono`] to opt into downmixing.
+    pub fn set_spatial(&self, spatial: Option<crate::SpatialSound>) -> Result<(), SoundscapeError> {
+        if let Some(spatial) = spatial {
+            spatial.validate()?;
+        }
+        let state = self.state()?;
+        state
+            .lock()
+            .unwrap()
+            .sound_mut(self.id)?
+            .set_spatial(spatial);
+        Ok(())
+    }
+
+    /// Returns this sound's spatial settings, or `None` when spatial rendering is disabled.
+    pub fn spatial(&self) -> Result<Option<crate::SpatialSound>, SoundscapeError> {
+        Ok(self.state()?.lock().unwrap().sound(self.id)?.spatial())
+    }
+
+    /// Updates the emitter transform without rebuilding the decoder or spatial renderer.
+    pub fn set_emitter(&self, emitter: crate::EmitterState) -> Result<(), SoundscapeError> {
+        let state = self.state()?;
+        state
+            .lock()
+            .unwrap()
+            .sound_mut(self.id)?
+            .set_emitter(emitter)
+    }
+
+    /// Updates direct-path gain and low-pass filtering without rebuilding the decoder.
+    pub fn set_occlusion(&self, occlusion: crate::Occlusion) -> Result<(), SoundscapeError> {
+        let state = self.state()?;
+        state
+            .lock()
+            .unwrap()
+            .sound_mut(self.id)?
+            .set_occlusion(occlusion)
+    }
+
     /// Sets this sound's pre-mix effect chain.
     pub fn set_effects(&self, effects: SoundEffects) -> Result<(), SoundscapeError> {
         let state = self.state()?;
@@ -2136,6 +2237,7 @@ impl SoundGroup {
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
+    use crate::{EmitterState, Occlusion, SpatialSound};
 
     const TEST_AUDIO_BYTES: &[u8] = include_bytes!("../examples/music/THE UNFORGIVING.mp3");
 
@@ -2589,6 +2691,84 @@ mod tests {
 
         theme.play().unwrap();
         assert!(theme.is_playing().unwrap());
+    }
+
+    #[test]
+    fn scene_spatial_settings_validate_and_normalize_listener_orientation() {
+        let soundscape = Soundscape::new_with_output(Output::new_deferred(None));
+        let initial_settings = soundscape.spatial_audio();
+        let mut invalid = initial_settings.clone();
+        invalid.doppler.speed_of_sound_mps = 0.0;
+        assert!(matches!(
+            soundscape.set_spatial_audio(invalid),
+            Err(SoundscapeError::InvalidSpatialSetting(_))
+        ));
+        assert_eq!(soundscape.spatial_audio(), initial_settings);
+
+        soundscape
+            .set_listener(ListenerState {
+                forward: [0.0, 0.0, -2.0],
+                up: [0.0, 3.0, 0.0],
+                ..ListenerState::default()
+            })
+            .unwrap();
+        let listener = soundscape.listener();
+        assert_eq!(listener.forward, [0.0, 0.0, -1.0]);
+        assert_eq!(listener.up, [0.0, 1.0, 0.0]);
+
+        assert!(matches!(
+            soundscape.set_listener(ListenerState {
+                up: [0.0, 0.0, -1.0],
+                ..ListenerState::default()
+            }),
+            Err(SoundscapeError::InvalidSpatialSetting(_))
+        ));
+        assert_eq!(soundscape.listener(), listener);
+    }
+
+    #[test]
+    fn sound_spatial_settings_and_live_acoustic_controls_round_trip() {
+        let soundscape = Soundscape::new_with_output(Output::new_deferred(None));
+        let sound = soundscape
+            .create_sound("sound", SoundSource::static_bytes(TEST_AUDIO_BYTES))
+            .unwrap();
+
+        assert!(matches!(
+            sound.set_emitter(EmitterState::default()),
+            Err(SoundscapeError::SoundNotSpatialized)
+        ));
+        let spatial = SpatialSound::default();
+        sound.set_spatial(Some(spatial)).unwrap();
+        assert_eq!(sound.spatial().unwrap(), Some(spatial));
+
+        let emitter = EmitterState {
+            position: [2.0, 1.0, -4.0],
+            velocity: [1.0, 0.0, 0.0],
+        };
+        sound.set_emitter(emitter).unwrap();
+        assert_eq!(sound.spatial().unwrap().unwrap().emitter, emitter);
+
+        let occlusion = Occlusion {
+            gain: 0.25,
+            low_pass_hz: Some(1_200.0),
+        };
+        sound.set_occlusion(occlusion).unwrap();
+        assert_eq!(sound.spatial().unwrap().unwrap().occlusion, occlusion);
+        assert!(matches!(
+            sound.set_occlusion(Occlusion {
+                gain: 2.0,
+                ..occlusion
+            }),
+            Err(SoundscapeError::InvalidSpatialSetting(_))
+        ));
+        assert_eq!(sound.spatial().unwrap().unwrap().occlusion, occlusion);
+
+        sound.set_spatial(None).unwrap();
+        assert_eq!(sound.spatial().unwrap(), None);
+        assert!(matches!(
+            sound.set_occlusion(occlusion),
+            Err(SoundscapeError::SoundNotSpatialized)
+        ));
     }
 
     #[test]
