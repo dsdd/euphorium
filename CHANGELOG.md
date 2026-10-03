@@ -1,6 +1,13 @@
 # Changelog
 
-## [0.6.0] - Unreleased
+## [0.6.0] - 2026-10-03
+
+### Added
+
+- Added spatial audio rendering with listener and emitter positioning, stereo panning or HRTF
+  binaural rendering, distance attenuation, occlusion, and Doppler shifting.
+- Added configurable HRTF profiles, mono downmixing for multichannel sources, live emitter and
+  occlusion controls, and a spatial audio example.
 
 ### Fixed
 
