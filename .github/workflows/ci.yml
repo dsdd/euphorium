@@ -25,6 +25,29 @@ jobs:
       - uses: jdx/mise-action@v4
       - uses: Swatinem/rust-cache@v2
       - run: mise check
+
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: awalsh128/cache-apt-pkgs-action@v1
+        with:
+          packages: libasound2-dev libjack-jackd2-dev libudev-dev pkg-config
+          version: 1.0
+      - uses: jdx/mise-action@v4
+      - uses: Swatinem/rust-cache@v2
+      - name: Build with the committed lockfile
+        run: cargo build --locked --workspace
+      - name: Build for wasm32
+        run: cargo build --locked --target wasm32-unknown-unknown
+      - name: Verify the published package builds from its own manifest
+        run: cargo package --locked --allow-dirty
+      - name: Verify the Trunk example app compiles
+        working-directory: examples/app
+        run: trunk build
+
   test-native:
     runs-on: ubuntu-latest
     steps:
